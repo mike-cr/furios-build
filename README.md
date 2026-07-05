@@ -63,8 +63,7 @@ sources into the image.
 From any Debian package source tree:
 
 ```sh
-FURIOS_BUILD=/path/to/furios-build
-"$FURIOS_BUILD/bin/furios-shell"
+furios-shell
 ```
 
 The current project is mounted at:
@@ -73,37 +72,31 @@ The current project is mounted at:
 /src/<project-name>
 ```
 
-The helper repo is always mounted read-only at:
-
-```text
-/furios-build
-```
-
 If `:Z` volume labeling causes trouble:
 
 ```sh
-FURIOS_VOLUME_SUFFIX= "$FURIOS_BUILD/bin/furios-shell"
+FURIOS_VOLUME_SUFFIX= furios-shell
 ```
 
 ## Build A Package
 
-Inside the container:
+For an interactive shell, apt setup can be streamed in from the host when
+needed:
 
 ```sh
-/furios-build/bin/furios-build --binary-only
+furios-shell bash -s < "$(command -v furios-apt-setup)"
 ```
 
-For a full source + binary build:
+For a generic one-shot build from the host:
 
 ```sh
-/furios-build/bin/furios-build
+furios-build-cached --binary-only
 ```
 
 Pass extra `dpkg-buildpackage` arguments after `--`:
 
-```sh
-/furios-build/bin/furios-build -- --build=any
-```
+Pass extra `dpkg-buildpackage` arguments after `--` when using
+`furios-build-cached`.
 
 The build helper runs:
 
@@ -125,22 +118,20 @@ builds when you do not need source artifacts.
 From a package source tree on the host:
 
 ```sh
-FURIOS_BUILD=/path/to/furios-build
 FURIOS_APT_CACHE=http://host.containers.internal:3142 \
-  "$FURIOS_BUILD/bin/furios-shell" \
-  /furios-build/bin/furios-build --binary-only
+  furios-build-cached --binary-only
 ```
 
 Or use the cached wrapper:
 
 ```sh
-"$FURIOS_BUILD/bin/furios-build-cached" --binary-only
+furios-build-cached --binary-only
 ```
 
 Full build through the cache:
 
 ```sh
-"$FURIOS_BUILD/bin/furios-build-cached"
+furios-build-cached
 ```
 
 ## Apt Cache
@@ -159,10 +150,8 @@ proxy and usually does not cache package payloads.
 Common cached build command:
 
 ```sh
-FURIOS_BUILD=/path/to/furios-build
 FURIOS_APT_CACHE=http://host.containers.internal:3142 \
-  "$FURIOS_BUILD/bin/furios-shell" \
-  /furios-build/bin/furios-build --binary-only
+  furios-build-cached --binary-only
 ```
 
 ## Environment
@@ -176,7 +165,6 @@ FURIOS_APT_CACHE              apt-cacher-ng HTTPS rewrite base URL
 FURIOS_APT_PROXY              apt proxy URL
 FURIOS_CONFIGURE_APT_TRUSTED  Set to 0 to keep existing apt trust/source config
 FURIOS_VOLUME_SUFFIX          Project volume suffix, default: :Z
-FURIOS_TOOLS_VOLUME_SUFFIX    Tools volume suffix, default: :Z,ro
 FURIOS_PROJECT_DIR            Project directory to mount instead of cwd/git root
 ```
 
