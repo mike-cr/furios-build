@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+binary_only=0
+install_build_deps=1
+clean=1
+run_lintian=1
+
+usage() {
+    cat <<'EOF'
+Usage: furios-build [options] [-- dpkg-buildpackage-args...]
+
+Build any Debian/FuriOS package from inside a FuriOS build container.
+
+Options:
+  -b, --binary-only       Run dpkg-buildpackage -b
+      --no-build-dep      Do not run apt build-dep -y .
+      --no-clean          Skip fakeroot debian/rules clean
+      --no-lintian        Skip lintian after building
+  -h, --help              Show this help
+
+Examples:
+  furios-build --binary-only
+  furios-build -- --build=any
+EOF
+}
+
+extra_build_args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -b|--binary-only)
+            binary_only=1
+            ;;
+        --no-build-dep)
+            install_build_deps=0
+            ;;
+        --no-clean)
+            clean=0
+            ;;
+        --no-lintian)
+            run_lintian=0
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            extra_build_args=("$@")
+            break
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+if ! command -v dpkg-buildpackage >/dev/null 2>&1; then
+    "${script_dir}/furios-apt-setup"
+    apt install -y build-essential devscripts dpkg-dev fakeroot lintian
+fi
+
+if [[ ! -f debian/control ]]; then
+    echo "No debian/control found in $(pwd)" >&2
+    exit 1
+fi
+
+"${script_dir}/furios-apt-setup"
+
+if [[ "${install_build_deps}" -eq 1 ]]; then
+    apt build-dep -y .
+fi
+
+if [[ "${clean}" -eq 1 ]]; then
+    fakeroot debian/rules clean
+fi
+
+build_args=(-us -uc)
+if [[ "${binary_only}" -eq 1 ]]; then
+    build_args+=(-b)
+fi
+build_args+=("${extra_build_args[@]}")
+
+dpkg-buildpackage "${build_args[@]}"
+
+if [[ "${run_lintian}" -eq 1 ]]; then
+    package="$(dpkg-parsechangelog -SSource)"
+    version="$(dpkg-parsechangelog -SVersion)"
+    arch="$(dpkg --print-architecture)"
+    changes="../${package}_${version}_${arch}.changes"
+    if [[ -f "${changes}" ]]; then
+        lintian "${changes}" || true
+    fi
+fi

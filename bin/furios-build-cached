@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+    repo_dir="$(git rev-parse --show-toplevel)"
+else
+    repo_dir="$(pwd -P)"
+fi
+
+cache="${FURIOS_APT_CACHE:-http://host.containers.internal:3142}"
+
+cd "${repo_dir}"
+
+FURIOS_APT_CACHE="${cache}" \
+    "${script_dir}/furios-shell" bash -lc \
+    '/furios-build/bin/furios-build "$@"' \
+    furios-build-cached "$@"

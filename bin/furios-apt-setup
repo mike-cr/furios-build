@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v apt >/dev/null 2>&1; then
+    echo "This script must run inside a FuriOS build container." >&2
+    exit 1
+fi
+
+suite="${FURIOS_SUITE:-forky}"
+
+if [[ "${FURIOS_CONFIGURE_APT_TRUSTED:-1}" != "0" ]]; then
+    printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99furios-build
+
+    if [[ -f /etc/apt/sources.list && ! -f /etc/apt/sources.list.furios-build.bak ]]; then
+        cp /etc/apt/sources.list /etc/apt/sources.list.furios-build.bak
+    fi
+
+    if [[ -n "${FURIOS_APT_CACHE:-}" ]]; then
+        cache="${FURIOS_APT_CACHE%/}"
+        cat >/etc/apt/sources.list <<EOF
+deb [trusted=yes] ${cache}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes] ${cache}/HTTPS///sync.furios.io ${suite} main
+deb [trusted=yes] ${cache}/HTTPS///lxc.furios.io ${suite} main
+deb [trusted=yes] ${cache}/HTTPS///production.repo.furios.io ${suite} main
+EOF
+    else
+        cat >/etc/apt/sources.list <<EOF
+deb [trusted=yes] https://debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes] https://sync.furios.io ${suite} main
+deb [trusted=yes] https://lxc.furios.io ${suite} main
+deb [trusted=yes] https://production.repo.furios.io ${suite} main
+EOF
+    fi
+fi
+
+if [[ -n "${FURIOS_APT_PROXY:-}" ]]; then
+    cat >/etc/apt/apt.conf.d/02proxy <<EOF
+Acquire::http::Proxy "${FURIOS_APT_PROXY}";
+Acquire::https::Proxy "${FURIOS_APT_PROXY}";
+EOF
+fi
+
+apt update

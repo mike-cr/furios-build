@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${FURIOS_PROJECT_DIR:-}" ]]; then
+    project_dir="$(cd "${FURIOS_PROJECT_DIR}" && pwd -P)"
+elif command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+    project_dir="$(git rev-parse --show-toplevel)"
+else
+    project_dir="$(pwd -P)"
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+tools_dir="$(cd "${script_dir}/.." && pwd -P)"
+project_name="$(basename "${project_dir}")"
+project_parent="$(dirname "${project_dir}")"
+
+image="${FURIOS_IMAGE:-localhost/furios-forky-arm64:latest}"
+volume_suffix="${FURIOS_VOLUME_SUFFIX:-:Z}"
+if [[ -n "${FURIOS_TOOLS_VOLUME_SUFFIX:-}" ]]; then
+    tools_volume_suffix="${FURIOS_TOOLS_VOLUME_SUFFIX}"
+elif [[ -n "${volume_suffix}" ]]; then
+    tools_volume_suffix="${volume_suffix},ro"
+else
+    tools_volume_suffix=":ro"
+fi
+command=("$@")
+
+if [[ "${#command[@]}" -eq 0 ]]; then
+    command=(bash)
+fi
+
+if [[ "${image}" != containers-storage:* ]]; then
+    image="containers-storage:${image}"
+fi
+
+exec podman run --rm -it \
+    --arch arm64 \
+    --pull=never \
+    -e FURIOS_APT_CACHE="${FURIOS_APT_CACHE:-}" \
+    -e FURIOS_APT_PROXY="${FURIOS_APT_PROXY:-}" \
+    -e FURIOS_CONFIGURE_APT_TRUSTED="${FURIOS_CONFIGURE_APT_TRUSTED:-}" \
+    -v "${project_parent}:/src${volume_suffix}" \
+    -v "${tools_dir}:/furios-build${tools_volume_suffix}" \
+    -w "/src/${project_name}" \
+    "${image}" \
+    "${command[@]}"

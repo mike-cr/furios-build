@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+rootfs="${FURIOS_ROOTFS:-${HOME}/containers/furios-forky-arm64}"
+image="${FURIOS_IMAGE:-localhost/furios-forky-arm64:latest}"
+suite="${FURIOS_SUITE:-forky}"
+use_apt_cache="${FURIOS_USE_APT_CACHE:-1}"
+host_apt_cache="${FURIOS_HOST_APT_CACHE:-http://127.0.0.1:3142}"
+container_apt_cache="${FURIOS_APT_CACHE:-http://host.containers.internal:3142}"
+mirror="${FURIOS_DEBOOTSTRAP_MIRROR:-}"
+force=0
+
+usage() {
+    cat <<'EOF'
+Usage: furios-create-container [--force]
+
+Create a FuriOS forky arm64 rootfs with debootstrap and import it as a
+rootless Podman image.
+
+Environment:
+  FURIOS_ROOTFS                Rootfs path (default: ~/containers/furios-forky-arm64)
+  FURIOS_IMAGE                 Podman image tag (default: localhost/furios-forky-arm64:latest)
+  FURIOS_SUITE                 Suite name (default: forky)
+  FURIOS_DEBOOTSTRAP_MIRROR    Bootstrap mirror (default: apt-cacher-ng if available,
+                               otherwise https://debian.furios.io)
+  FURIOS_USE_APT_CACHE         Use apt-cacher-ng URL rewrite mode when available (default: 1)
+  FURIOS_HOST_APT_CACHE        Host-side apt-cacher-ng URL (default: http://127.0.0.1:3142)
+  FURIOS_APT_CACHE             Container-side apt-cacher-ng URL
+                               (default: http://host.containers.internal:3142)
+
+Options:
+  --force   Remove any existing rootfs and Podman image before recreating
+  -h        Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --force)
+            force=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+for cmd in debootstrap podman sudo tar; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        echo "Missing required command: ${cmd}" >&2
+        exit 1
+    fi
+done
+
+if [[ -z "${mirror}" ]]; then
+    if [[ "${use_apt_cache}" != "0" ]] && command -v curl >/dev/null 2>&1 \
+        && curl -fsI "${host_apt_cache%/}/HTTPS///debian.furios.io/dists/${suite}/InRelease" >/dev/null 2>&1; then
+        mirror="${host_apt_cache%/}/HTTPS///debian.furios.io"
+    else
+        mirror="https://debian.furios.io"
+    fi
+fi
+
+if [[ -e "${rootfs}" && "${force}" -ne 1 ]]; then
+    echo "Rootfs already exists: ${rootfs}" >&2
+    echo "Rerun with --force to remove and recreate it." >&2
+    exit 1
+fi
+
+if podman image exists "${image}" && [[ "${force}" -ne 1 ]]; then
+    echo "Podman image already exists: ${image}" >&2
+    echo "Rerun with --force to remove and recreate it." >&2
+    exit 1
+fi
+
+if [[ "${force}" -eq 1 ]]; then
+    sudo rm -rf "${rootfs}"
+    podman rmi -f "${image}" >/dev/null 2>&1 || true
+fi
+
+if [[ ! -e "/usr/share/debootstrap/scripts/${suite}" ]]; then
+    sudo ln -sf /usr/share/debootstrap/scripts/sid "/usr/share/debootstrap/scripts/${suite}"
+fi
+
+mkdir -p "$(dirname "${rootfs}")"
+
+host_arch="$(uname -m)"
+debootstrap_args=(
+    --arch=arm64
+    --variant=minbase
+    --components=main,contrib,non-free,non-free-firmware
+)
+
+if [[ "${host_arch}" != "aarch64" && "${host_arch}" != "arm64" ]]; then
+    debootstrap_args+=(--foreign)
+fi
+
+sudo debootstrap \
+    "${debootstrap_args[@]}" \
+    "${suite}" \
+    "${rootfs}" \
+    "${mirror}"
+
+if [[ "${host_arch}" != "aarch64" && "${host_arch}" != "arm64" ]]; then
+    if ! command -v qemu-aarch64-static >/dev/null 2>&1; then
+        echo "Missing qemu-aarch64-static for non-arm64 host." >&2
+        exit 1
+    fi
+
+    sudo cp "$(command -v qemu-aarch64-static)" "${rootfs}/usr/bin/"
+    sudo chroot "${rootfs}" /debootstrap/debootstrap --second-stage
+fi
+
+if [[ "${use_apt_cache}" != "0" ]]; then
+    sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
+deb [trusted=yes] ${container_apt_cache%/}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes] ${container_apt_cache%/}/HTTPS///sync.furios.io ${suite} main
+deb [trusted=yes] ${container_apt_cache%/}/HTTPS///lxc.furios.io ${suite} main
+deb [trusted=yes] ${container_apt_cache%/}/HTTPS///production.repo.furios.io ${suite} main
+EOF
+else
+    sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
+deb https://debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb https://sync.furios.io ${suite} main
+deb https://lxc.furios.io ${suite} main
+deb https://production.repo.furios.io ${suite} main
+EOF
+fi
+
+sudo tar -C "${rootfs}" -cpf - . \
+    | podman import --arch arm64 --os linux - "${image}"
+
+echo "Created ${image}"
+echo "Verify with: bin/furios-shell dpkg --print-architecture"
