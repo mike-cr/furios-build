@@ -23,12 +23,13 @@ directory permissions must be correct.
 The default image name is:
 
 ```text
-localhost/furios-forky-arm64:latest
+localhost/furios-forky-arm64-build:latest
 ```
 
 ## Create The Container Image
 
-Create or recreate the FuriOS rootfs and import it into Podman:
+Create or recreate the FuriOS rootfs, install common Debian packaging tools,
+and import it into Podman:
 
 ```sh
 bin/furios-create-container --force
@@ -52,11 +53,40 @@ Useful overrides:
 FURIOS_ROOTFS=/mnt/bulk/furios-forky-arm64 bin/furios-create-container --force
 FURIOS_IMAGE=localhost/furios-forky-arm64:test bin/furios-create-container
 FURIOS_USE_APT_CACHE=0 bin/furios-create-container --force
+FURIOS_PREINSTALL_BUILD_TOOLS=0 bin/furios-create-container --force
 ```
 
 If apt-cacher-ng is available at `http://127.0.0.1:3142`, the create script
 uses its `HTTPS///` URL rewrite mode for bootstrapping and writes cached apt
 sources into the image.
+
+The default image includes a broad build tool set, including `build-essential`,
+`debhelper`, `devscripts`, `fakeroot`, `lintian`, `git`, `cmake`,
+`ninja-build`, `pkg-config`, `quilt`, and common Python packaging helpers.
+Package-specific dependencies are still installed by `apt build-dep -y .`
+during builds.
+
+## Upgrade The Container Image
+
+To conservatively upgrade installed packages in the build image without
+recreating the rootfs:
+
+```sh
+bin/furios-upgrade-container
+```
+
+This runs `apt update` and `apt upgrade`, then commits the result back to:
+
+```text
+localhost/furios-forky-arm64-build:latest
+```
+
+It intentionally does not run `apt full-upgrade`, so it avoids broader package
+replacement/removal decisions. The same image override works here too:
+
+```sh
+FURIOS_IMAGE=localhost/furios-forky-arm64:test bin/furios-upgrade-container
+```
 
 ## Enter A Package Build Shell
 

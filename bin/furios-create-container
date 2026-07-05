@@ -2,12 +2,13 @@
 set -euo pipefail
 
 rootfs="${FURIOS_ROOTFS:-${HOME}/containers/furios-forky-arm64}"
-image="${FURIOS_IMAGE:-localhost/furios-forky-arm64:latest}"
+image="${FURIOS_IMAGE:-localhost/furios-forky-arm64-build:latest}"
 suite="${FURIOS_SUITE:-forky}"
 use_apt_cache="${FURIOS_USE_APT_CACHE:-1}"
 host_apt_cache="${FURIOS_HOST_APT_CACHE:-http://127.0.0.1:3142}"
 container_apt_cache="${FURIOS_APT_CACHE:-http://host.containers.internal:3142}"
 mirror="${FURIOS_DEBOOTSTRAP_MIRROR:-}"
+preinstall_build_tools="${FURIOS_PREINSTALL_BUILD_TOOLS:-1}"
 force=0
 
 usage() {
@@ -19,7 +20,7 @@ rootless Podman image.
 
 Environment:
   FURIOS_ROOTFS                Rootfs path (default: ~/containers/furios-forky-arm64)
-  FURIOS_IMAGE                 Podman image tag (default: localhost/furios-forky-arm64:latest)
+  FURIOS_IMAGE                 Podman image tag (default: localhost/furios-forky-arm64-build:latest)
   FURIOS_SUITE                 Suite name (default: forky)
   FURIOS_DEBOOTSTRAP_MIRROR    Bootstrap mirror (default: apt-cacher-ng if available,
                                otherwise https://debian.furios.io)
@@ -27,6 +28,8 @@ Environment:
   FURIOS_HOST_APT_CACHE        Host-side apt-cacher-ng URL (default: http://127.0.0.1:3142)
   FURIOS_APT_CACHE             Container-side apt-cacher-ng URL
                                (default: http://host.containers.internal:3142)
+  FURIOS_PREINSTALL_BUILD_TOOLS Install common Debian packaging tools before import
+                               (default: 1)
 
 Options:
   --force   Remove any existing rootfs and Podman image before recreating
@@ -118,20 +121,78 @@ if [[ "${host_arch}" != "aarch64" && "${host_arch}" != "arm64" ]]; then
     sudo chroot "${rootfs}" /debootstrap/debootstrap --second-stage
 fi
 
+write_sources() {
+    local apt_cache_base="${1:-}"
+
+    if [[ -n "${apt_cache_base}" ]]; then
+        sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
+deb [trusted=yes allow-insecure=yes] ${apt_cache_base%/}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] ${apt_cache_base%/}/HTTPS///sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${apt_cache_base%/}/HTTPS///lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${apt_cache_base%/}/HTTPS///production.repo.furios.io ${suite} main
+EOF
+    else
+        sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
+deb [trusted=yes allow-insecure=yes] https://debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] https://sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://production.repo.furios.io ${suite} main
+EOF
+    fi
+}
+
 if [[ "${use_apt_cache}" != "0" ]]; then
-    sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
-deb [trusted=yes] ${container_apt_cache%/}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
-deb [trusted=yes] ${container_apt_cache%/}/HTTPS///sync.furios.io ${suite} main
-deb [trusted=yes] ${container_apt_cache%/}/HTTPS///lxc.furios.io ${suite} main
-deb [trusted=yes] ${container_apt_cache%/}/HTTPS///production.repo.furios.io ${suite} main
-EOF
+    write_sources "${host_apt_cache}"
 else
-    sudo tee "${rootfs}/etc/apt/sources.list" >/dev/null <<EOF
-deb https://debian.furios.io ${suite} main contrib non-free non-free-firmware
-deb https://sync.furios.io ${suite} main
-deb https://lxc.furios.io ${suite} main
-deb https://production.repo.furios.io ${suite} main
+    write_sources
+fi
+
+sudo tee "${rootfs}/etc/apt/apt.conf.d/99furios-build" >/dev/null <<'EOF'
+Acquire::Check-Valid-Until "false";
+Acquire::AllowInsecureRepositories "true";
+Acquire::AllowDowngradeToInsecureRepositories "true";
+APT::Get::AllowUnauthenticated "true";
 EOF
+
+if [[ "${preinstall_build_tools}" != "0" ]]; then
+    sudo chroot "${rootfs}" apt update --allow-insecure-repositories
+    sudo chroot "${rootfs}" apt upgrade -y --allow-unauthenticated
+    sudo chroot "${rootfs}" apt install -y --allow-unauthenticated \
+        apt-utils \
+        build-essential \
+        ca-certificates \
+        cmake \
+        debhelper \
+        devscripts \
+        dh-python \
+        dh-sequence-python3 \
+        dpkg-dev \
+        equivs \
+        fakeroot \
+        file \
+        git \
+        gnupg \
+        lintian \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        pybuild-plugin-pyproject \
+        python3-all-dev \
+        python3-build \
+        python3-installer \
+        python3-setuptools \
+        python3-wheel \
+        quilt \
+        rsync \
+        wget \
+        xz-utils
+    sudo chroot "${rootfs}" apt clean
+    sudo rm -rf "${rootfs}/var/lib/apt/lists/"* "${rootfs}/tmp/"*
+fi
+
+if [[ "${use_apt_cache}" != "0" ]]; then
+    write_sources "${container_apt_cache}"
 fi
 
 sudo tar -C "${rootfs}" -cpf - . \

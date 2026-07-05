@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image="${FURIOS_IMAGE:-localhost/furios-forky-arm64-build:latest}"
+suite="${FURIOS_SUITE:-forky}"
+container_name="${FURIOS_UPGRADE_CONTAINER_NAME:-furios-upgrade}"
+cache="${FURIOS_APT_CACHE:-http://host.containers.internal:3142}"
+use_apt_cache="${FURIOS_USE_APT_CACHE:-1}"
+
+usage() {
+    cat <<'EOF'
+Usage: furios-upgrade-container
+
+Conservatively upgrade packages in the FuriOS build image and commit the
+result back to the same image tag.
+
+Environment:
+  FURIOS_IMAGE                   Image tag (default: localhost/furios-forky-arm64-build:latest)
+  FURIOS_SUITE                   Suite name (default: forky)
+  FURIOS_APT_CACHE               Container-side apt-cacher-ng URL
+                                (default: http://host.containers.internal:3142)
+  FURIOS_USE_APT_CACHE           Use apt-cacher-ng URL rewrite mode (default: 1)
+  FURIOS_UPGRADE_CONTAINER_NAME  Temporary container name (default: furios-upgrade)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if ! command -v podman >/dev/null 2>&1; then
+    echo "Missing required command: podman" >&2
+    exit 1
+fi
+
+run_image="${image}"
+if [[ "${run_image}" != containers-storage:* ]]; then
+    run_image="containers-storage:${run_image}"
+fi
+
+podman run --replace --name "${container_name}" \
+    --arch arm64 \
+    --pull=never \
+    --env FURIOS_SUITE="${suite}" \
+    --env FURIOS_APT_CACHE="${cache}" \
+    --env FURIOS_USE_APT_CACHE="${use_apt_cache}" \
+    "${run_image}" \
+    bash -lc '
+set -e
+
+suite="${FURIOS_SUITE}"
+cache="${FURIOS_APT_CACHE%/}"
+use_apt_cache="${FURIOS_USE_APT_CACHE}"
+
+rm -f /etc/apt/apt.conf.d/02proxy
+
+cat >/etc/apt/apt.conf.d/99furios-build <<EOF
+Acquire::Check-Valid-Until "false";
+Acquire::AllowInsecureRepositories "true";
+Acquire::AllowDowngradeToInsecureRepositories "true";
+APT::Get::AllowUnauthenticated "true";
+EOF
+
+if [ "${use_apt_cache}" != "0" ]; then
+    cat >/etc/apt/sources.list <<EOF
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///production.repo.furios.io ${suite} main
+EOF
+else
+    cat >/etc/apt/sources.list <<EOF
+deb [trusted=yes allow-insecure=yes] https://debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] https://sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://production.repo.furios.io ${suite} main
+EOF
+fi
+
+apt update --allow-insecure-repositories
+apt upgrade -y --allow-unauthenticated
+apt clean
+rm -rf /var/lib/apt/lists/* /tmp/*
+'
+
+podman commit "${container_name}" "${image}"
+podman rm "${container_name}" >/dev/null
+
+echo "Updated ${image}"

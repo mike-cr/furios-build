@@ -12,7 +12,7 @@ fi
 project_name="$(basename "${project_dir}")"
 project_parent="$(dirname "${project_dir}")"
 
-image="${FURIOS_IMAGE:-localhost/furios-forky-arm64:latest}"
+image="${FURIOS_IMAGE:-localhost/furios-forky-arm64-build:latest}"
 volume_suffix="${FURIOS_VOLUME_SUFFIX:-:Z}"
 command=("$@")
 

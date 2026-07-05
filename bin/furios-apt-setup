@@ -9,7 +9,12 @@ fi
 suite="${FURIOS_SUITE:-forky}"
 
 if [[ "${FURIOS_CONFIGURE_APT_TRUSTED:-1}" != "0" ]]; then
-    printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99furios-build
+    cat >/etc/apt/apt.conf.d/99furios-build <<'EOF'
+Acquire::Check-Valid-Until "false";
+Acquire::AllowInsecureRepositories "true";
+Acquire::AllowDowngradeToInsecureRepositories "true";
+APT::Get::AllowUnauthenticated "true";
+EOF
 
     if [[ -f /etc/apt/sources.list && ! -f /etc/apt/sources.list.furios-build.bak ]]; then
         cp /etc/apt/sources.list /etc/apt/sources.list.furios-build.bak
@@ -18,17 +23,17 @@ if [[ "${FURIOS_CONFIGURE_APT_TRUSTED:-1}" != "0" ]]; then
     if [[ -n "${FURIOS_APT_CACHE:-}" ]]; then
         cache="${FURIOS_APT_CACHE%/}"
         cat >/etc/apt/sources.list <<EOF
-deb [trusted=yes] ${cache}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
-deb [trusted=yes] ${cache}/HTTPS///sync.furios.io ${suite} main
-deb [trusted=yes] ${cache}/HTTPS///lxc.furios.io ${suite} main
-deb [trusted=yes] ${cache}/HTTPS///production.repo.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] ${cache}/HTTPS///production.repo.furios.io ${suite} main
 EOF
     else
         cat >/etc/apt/sources.list <<EOF
-deb [trusted=yes] https://debian.furios.io ${suite} main contrib non-free non-free-firmware
-deb [trusted=yes] https://sync.furios.io ${suite} main
-deb [trusted=yes] https://lxc.furios.io ${suite} main
-deb [trusted=yes] https://production.repo.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://debian.furios.io ${suite} main contrib non-free non-free-firmware
+deb [trusted=yes allow-insecure=yes] https://sync.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://lxc.furios.io ${suite} main
+deb [trusted=yes allow-insecure=yes] https://production.repo.furios.io ${suite} main
 EOF
     fi
 fi
@@ -40,4 +45,4 @@ Acquire::https::Proxy "${FURIOS_APT_PROXY}";
 EOF
 fi
 
-apt update
+apt update --allow-insecure-repositories
